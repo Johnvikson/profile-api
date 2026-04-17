@@ -107,7 +107,12 @@ def create_profile(profile: ProfileCreate):
         result = supabase.table("profiles").insert(payload).execute()
     except APIError as e:
         if e.code == "23505":
-            raise HTTPException(status_code=409, detail="A profile with that name already exists")
+            existing = supabase.table("profiles").select("*").eq("name", profile.name).single().execute()
+            return JSONResponse(
+                status_code=200,
+                content={"status": "success", "message": "Profile already exists", "data": existing.data},
+                headers=CORS_HEADERS,
+            )
         raise HTTPException(status_code=500, detail=e.message)
     return JSONResponse(status_code=201, content=result.data[0], headers=CORS_HEADERS)
 
