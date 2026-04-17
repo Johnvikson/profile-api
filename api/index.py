@@ -30,6 +30,15 @@ def uuid7() -> str:
 
 CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
 
+
+def normalize(row: dict) -> dict:
+    if row.get("created_at"):
+        dt = datetime.fromisoformat(row["created_at"])
+        row["created_at"] = dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if row.get("gender_probability") is not None:
+        row["gender_probability"] = float(row["gender_probability"])
+    return row
+
 app = FastAPI()
 
 app.add_middleware(
@@ -155,11 +164,11 @@ async def create_profile(profile: ProfileCreate):
             existing = supabase.table("profiles").select("*").eq("name", profile.name).single().execute()
             return JSONResponse(
                 status_code=200,
-                content={"status": "success", "message": "Profile already exists", "data": existing.data},
+                content={"status": "success", "message": "Profile already exists", "data": normalize(existing.data)},
                 headers=CORS_HEADERS,
             )
         raise HTTPException(status_code=500, detail=e.message)
-    return JSONResponse(status_code=201, content=result.data[0], headers=CORS_HEADERS)
+    return JSONResponse(status_code=201, content=normalize(result.data[0]), headers=CORS_HEADERS)
 
 
 @app.put("/api/profiles/{profile_id}")
