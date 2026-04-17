@@ -1,7 +1,8 @@
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from postgrest.exceptions import APIError
 from supabase import create_client, Client
 from typing import Optional
@@ -28,9 +29,6 @@ def uuid7() -> str:
     return f"{hex_str[:8]}-{hex_str[8:12]}-{hex_str[12:16]}-{hex_str[16:20]}-{hex_str[20:]}"
 
 
-CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
-
-
 def normalize(row: dict) -> dict:
     if row.get("created_at"):
         dt = datetime.fromisoformat(row["created_at"])
@@ -38,6 +36,9 @@ def normalize(row: dict) -> dict:
     if row.get("gender_probability") is not None:
         row["gender_probability"] = float(row["gender_probability"])
     return row
+
+
+CORS_HEADERS = {"Access-Control-Allow-Origin": "*"}
 
 app = FastAPI()
 
@@ -54,11 +55,23 @@ supabase: Client = create_client(
 )
 
 
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    errors = exc.errors()
+    msg = errors[0]["msg"] if errors else "Validation error"
+    msg = msg.removeprefix("Value error, ")
+    return JSONResponse(
+        status_code=400,
+        content={"status": "error", "message": msg},
+        headers=CORS_HEADERS,
+    )
+
+
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
     return JSONResponse(
         status_code=exc.status_code,
-        content={"detail": exc.detail},
+        content={"status": "error", "message": exc.detail},
         headers=CORS_HEADERS,
     )
 
@@ -67,20 +80,20 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def generic_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"status": "error", "message": "Internal server error"},
         headers=CORS_HEADERS,
     )
 
 
 class ProfileCreate(BaseModel):
     name: str
-    gender: Optional[str] = None
-    gender_probability: Optional[float] = None
-    sample_size: Optional[int] = None
-    age: Optional[int] = None
-    age_group: Optional[str] = None
-    country_id: Optional[str] = None
-    country_probability: Optional[float] = None
+
+    @field_validator("name")
+    @classmethod
+    def name_not_empty(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("name must not be empty")
+        return v
 
 
 class ProfileUpdate(BaseModel):
@@ -95,9 +108,20 @@ class ProfileUpdate(BaseModel):
 
 
 @app.get("/api/profiles")
-def list_profiles():
-    result = supabase.table("profiles").select("*").execute()
-    return JSONResponse(content=result.data, headers=CORS_HEADERS)
+def list_profiles(
+    gender: Optional[str] = None,
+    age_group: Optional[str] = None,
+    country_id: Optional[str] = None,
+):
+    query = supabase.table("profiles").select("*")
+    if gender:
+        query = query.ilike("gender", gender)
+    if age_group:
+        query = query.ilike("age_group", age_group)
+    if country_id:
+        query = query.ilike("country_id", country_id)
+    result = query.execute()
+    return JSONResponse(content=[normalize(r) for r in result.data], headers=CORS_HEADERS)
 
 
 @app.get("/api/profiles/{profile_id}")
@@ -108,13 +132,13 @@ def get_profile(profile_id: str):
         if e.code == "PGRST116":
             raise HTTPException(status_code=404, detail="Profile not found")
         raise HTTPException(status_code=500, detail=e.message)
-    return JSONResponse(content=result.data, headers=CORS_HEADERS)
+    return JSONResponse(content=normalize(result.data), headers=CORS_HEADERS)
 
 
 async def enrich(name: str) -> dict:
     async with httpx.AsyncClient(timeout=10) as client:
-        gender_req = client.get(f"https://api.genderize.io/?name={name}")
-        age_req    = client.get(f"https://api.agify.io/?name={name}")
+        gender_req  = client.get(f"https://api.genderize.io/?name={name}")
+        age_req     = client.get(f"https://api.agify.io/?name={name}")
         country_req = client.get(f"https://api.nationalize.io/?name={name}")
         gender_res, age_res, country_res = await asyncio.gather(gender_req, age_req, country_req)
 
@@ -182,7 +206,7 @@ def update_profile(profile_id: str, profile: ProfileUpdate):
         raise HTTPException(status_code=500, detail=e.message)
     if not result.data:
         raise HTTPException(status_code=404, detail="Profile not found")
-    return JSONResponse(content=result.data[0], headers=CORS_HEADERS)
+    return JSONResponse(content=normalize(result.data[0]), headers=CORS_HEADERS)
 
 
 @app.delete("/api/profiles/{profile_id}")
