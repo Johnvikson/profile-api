@@ -121,7 +121,11 @@ def list_profiles(
     if country_id:
         query = query.ilike("country_id", country_id)
     result = query.execute()
-    return JSONResponse(content=[normalize(r) for r in result.data], headers=CORS_HEADERS)
+    profiles = [normalize(r) for r in result.data]
+    return JSONResponse(
+        content={"status": "success", "count": len(profiles), "data": profiles},
+        headers=CORS_HEADERS,
+    )
 
 
 @app.get("/api/profiles/{profile_id}")
@@ -132,7 +136,10 @@ def get_profile(profile_id: str):
         if e.code == "PGRST116":
             raise HTTPException(status_code=404, detail="Profile not found")
         raise HTTPException(status_code=500, detail=e.message)
-    return JSONResponse(content=normalize(result.data), headers=CORS_HEADERS)
+    return JSONResponse(
+        content={"status": "success", "data": normalize(result.data)},
+        headers=CORS_HEADERS,
+    )
 
 
 async def enrich(name: str) -> dict:
@@ -192,7 +199,11 @@ async def create_profile(profile: ProfileCreate):
                 headers=CORS_HEADERS,
             )
         raise HTTPException(status_code=500, detail=e.message)
-    return JSONResponse(status_code=201, content=normalize(result.data[0]), headers=CORS_HEADERS)
+    return JSONResponse(
+        status_code=201,
+        content={"status": "success", "data": normalize(result.data[0])},
+        headers=CORS_HEADERS,
+    )
 
 
 @app.put("/api/profiles/{profile_id}")
