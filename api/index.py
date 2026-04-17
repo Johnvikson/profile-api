@@ -121,11 +121,24 @@ async def enrich(name: str) -> dict:
         top_country = top["country_id"]
         top_probability = top["probability"]
 
+    age = age_data.get("age")
+    if age is None:
+        age_group = None
+    elif age <= 12:
+        age_group = "child"
+    elif age <= 19:
+        age_group = "teenager"
+    elif age <= 59:
+        age_group = "adult"
+    else:
+        age_group = "senior"
+
     return {
         "gender":              gender_data.get("gender"),
         "gender_probability":  gender_data.get("probability"),
         "sample_size":         gender_data.get("count"),
-        "age":                 age_data.get("age"),
+        "age":                 age,
+        "age_group":           age_group,
         "country_id":          top_country,
         "country_probability": top_probability,
     }
