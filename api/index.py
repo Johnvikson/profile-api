@@ -7,6 +7,8 @@ from supabase import create_client, Client
 from typing import Optional
 from datetime import datetime, timezone
 from dotenv import load_dotenv
+import asyncio
+import httpx
 import os
 import random
 
@@ -100,9 +102,39 @@ def get_profile(profile_id: str):
     return JSONResponse(content=result.data, headers=CORS_HEADERS)
 
 
+async def enrich(name: str) -> dict:
+    async with httpx.AsyncClient(timeout=10) as client:
+        gender_req = client.get(f"https://api.genderize.io/?name={name}")
+        age_req    = client.get(f"https://api.agify.io/?name={name}")
+        country_req = client.get(f"https://api.nationalize.io/?name={name}")
+        gender_res, age_res, country_res = await asyncio.gather(gender_req, age_req, country_req)
+
+    gender_data  = gender_res.json()
+    age_data     = age_res.json()
+    country_data = country_res.json()
+
+    top_country = None
+    top_probability = None
+    countries = country_data.get("country", [])
+    if countries:
+        top = max(countries, key=lambda c: c["probability"])
+        top_country = top["country_id"]
+        top_probability = top["probability"]
+
+    return {
+        "gender":              gender_data.get("gender"),
+        "gender_probability":  gender_data.get("probability"),
+        "sample_size":         gender_data.get("count"),
+        "age":                 age_data.get("age"),
+        "country_id":          top_country,
+        "country_probability": top_probability,
+    }
+
+
 @app.post("/api/profiles", status_code=201)
-def create_profile(profile: ProfileCreate):
-    payload = {"id": uuid7(), **profile.model_dump()}
+async def create_profile(profile: ProfileCreate):
+    enriched = await enrich(profile.name)
+    payload = {"id": uuid7(), "name": profile.name, **enriched}
     try:
         result = supabase.table("profiles").insert(payload).execute()
     except APIError as e:
