@@ -56,7 +56,7 @@ async def http_exception_handler(request: Request, exc: HTTPException):
 async def generic_exception_handler(request: Request, exc: Exception):
     return JSONResponse(
         status_code=500,
-        content={"detail": "Internal server error"},
+        content={"detail": str(exc)},
         headers=CORS_HEADERS,
     )
 
