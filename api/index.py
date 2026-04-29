@@ -41,7 +41,7 @@ GITHUB_CLIENT_SECRET = os.environ["GITHUB_CLIENT_SECRET"]
 GITHUB_REDIRECT_URI  = os.environ["GITHUB_REDIRECT_URI"]
 JWT_SECRET           = os.environ["JWT_SECRET"]
 FRONTEND_URL         = os.environ["FRONTEND_URL"]
-TEST_MODE            = os.environ.get("TEST_MODE", "false").lower() == "true"
+TEST_MODE            = os.environ.get("TEST_MODE", "false").strip().lower() == "true"
 
 JWT_ALGORITHM    = "HS256"
 ACCESS_TOKEN_TTL = timedelta(minutes=3)
