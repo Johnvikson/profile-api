@@ -640,21 +640,25 @@ def test_token(body: TestTokenRequest):
     role = body.role if body.role in ("admin", "analyst") else "analyst"
     now_iso = datetime.now(timezone.utc).isoformat()
 
-    # Upsert the hardcoded test user, updating role to match the request
-    existing = supabase.table("users").select("*").eq("github_id", "test_user").execute()
+    # Each role gets its own stable test user so concurrent role checks
+    # don't overwrite each other's DB record.
+    github_id = f"test_user_{role}"
+    username  = f"test_user_{role}"
+    email     = f"test_{role}@insighta.dev"
+
+    existing = supabase.table("users").select("*").eq("github_id", github_id).execute()
     if existing.data:
         user_id = existing.data[0]["id"]
         supabase.table("users").update({
-            "role":          role,
             "last_login_at": now_iso,
         }).eq("id", user_id).execute()
     else:
         user_id = uuid7()
         supabase.table("users").insert({
             "id":            user_id,
-            "github_id":     "test_user",
-            "username":      "test_user",
-            "email":         "test@insighta.dev",
+            "github_id":     github_id,
+            "username":      username,
+            "email":         email,
             "avatar_url":    None,
             "role":          role,
             "is_active":     True,
