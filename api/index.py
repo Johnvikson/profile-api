@@ -429,11 +429,29 @@ def build_filtered_query(
 # Auth routes  (/auth/*)  — rate limit: 10/min per IP
 # ---------------------------------------------------------------------------
 
+@app.get("/auth/me")
+def get_me(user: dict = Depends(get_current_user)):
+    return JSONResponse(
+        content={
+            "status": "success",
+            "data": {
+                "id":         user.get("id"),
+                "username":   user.get("username"),
+                "email":      user.get("email"),
+                "role":       user.get("role"),
+                "avatar_url": user.get("avatar_url"),
+            },
+        },
+        headers=CORS_HEADERS,
+    )
+
+
 @app.get("/auth/github")
 @limiter.limit("10/minute")
-def github_login(request: Request):
+def github_login(request: Request, cli: bool = False):
     state = secrets.token_urlsafe(16)
-    _oauth_states[state] = time.time()
+    # Encode cli flag into state so the callback can read it without extra storage
+    _oauth_states[state] = {"ts": time.time(), "cli": cli}
     params = (
         f"client_id={GITHUB_CLIENT_ID}"
         f"&redirect_uri={GITHUB_REDIRECT_URI}"
@@ -453,7 +471,8 @@ async def github_callback(request: Request, code: str, state: str):
             content={"status": "error", "message": "Invalid OAuth state"},
             headers=CORS_HEADERS,
         )
-    _oauth_states.pop(state)
+    state_data = _oauth_states.pop(state)
+    is_cli     = state_data.get("cli", False)
 
     async with httpx.AsyncClient(timeout=10) as client:
         token_res = await client.post(
@@ -523,8 +542,9 @@ async def github_callback(request: Request, code: str, state: str):
     access_token  = issue_access_token(user["id"], user.get("role", "analyst"))
     refresh_token = issue_refresh_token(user["id"])
 
+    redirect_base = "http://localhost:8888/callback" if is_cli else FRONTEND_URL
     return RedirectResponse(
-        f"{FRONTEND_URL}?access_token={access_token}&refresh_token={refresh_token}",
+        f"{redirect_base}?access_token={access_token}&refresh_token={refresh_token}",
         status_code=302,
     )
 
