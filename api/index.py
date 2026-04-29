@@ -41,6 +41,7 @@ GITHUB_CLIENT_SECRET = os.environ["GITHUB_CLIENT_SECRET"]
 GITHUB_REDIRECT_URI  = os.environ["GITHUB_REDIRECT_URI"]
 JWT_SECRET           = os.environ["JWT_SECRET"]
 FRONTEND_URL         = os.environ["FRONTEND_URL"]
+TEST_MODE            = os.environ.get("TEST_MODE", "false").lower() == "true"
 
 JWT_ALGORITHM    = "HS256"
 ACCESS_TOKEN_TTL = timedelta(minutes=3)
@@ -384,6 +385,10 @@ class RefreshRequest(BaseModel):
 class LogoutRequest(BaseModel):
     refresh_token: str
 
+
+class TestTokenRequest(BaseModel):
+    role: str = "analyst"
+
 # ---------------------------------------------------------------------------
 # Shared query builder
 # ---------------------------------------------------------------------------
@@ -470,7 +475,10 @@ def github_login(request: Request, cli: bool = False):
         f"&code_challenge={code_challenge}"
         f"&code_challenge_method=S256"
     )
-    return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
+    response = RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
+    for k, v in CORS_HEADERS.items():
+        response.headers[k] = v
+    return response
 
 
 @app.get("/auth/github/callback")
@@ -620,6 +628,66 @@ def logout(request: Request, body: LogoutRequest):
     supabase.table("refresh_tokens").delete().eq("token", body.refresh_token).execute()
     return JSONResponse(
         content={"status": "success", "message": "Logged out"},
+        headers=CORS_HEADERS,
+    )
+
+
+@app.post("/auth/test-token")
+def test_token(body: TestTokenRequest):
+    if not TEST_MODE:
+        raise HTTPException(status_code=404, detail="Not found")
+
+    role = body.role if body.role in ("admin", "analyst") else "analyst"
+    now_iso = datetime.now(timezone.utc).isoformat()
+
+    # Upsert the hardcoded test user, updating role to match the request
+    existing = supabase.table("users").select("*").eq("github_id", "test_user").execute()
+    if existing.data:
+        user_id = existing.data[0]["id"]
+        supabase.table("users").update({
+            "role":          role,
+            "last_login_at": now_iso,
+        }).eq("id", user_id).execute()
+    else:
+        user_id = uuid7()
+        supabase.table("users").insert({
+            "id":            user_id,
+            "github_id":     "test_user",
+            "username":      "test_user",
+            "email":         "test@insighta.dev",
+            "avatar_url":    None,
+            "role":          role,
+            "is_active":     True,
+            "last_login_at": now_iso,
+        }).execute()
+
+    access_token  = issue_access_token(user_id, role)
+    refresh_token = issue_refresh_token(user_id)
+
+    return JSONResponse(
+        content={
+            "status":        "success",
+            "access_token":  access_token,
+            "refresh_token": refresh_token,
+        },
+        headers=CORS_HEADERS,
+    )
+
+
+@app.get("/api/users/me")
+def api_users_me(user: dict = Depends(get_current_user)):
+    """Alias for /auth/me — no X-API-Version header required."""
+    return JSONResponse(
+        content={
+            "status": "success",
+            "data": {
+                "id":         user.get("id"),
+                "username":   user.get("username"),
+                "email":      user.get("email"),
+                "role":       user.get("role"),
+                "avatar_url": user.get("avatar_url"),
+            },
+        },
         headers=CORS_HEADERS,
     )
 
