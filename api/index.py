@@ -15,7 +15,9 @@ from typing import Optional
 from datetime import datetime, timezone, timedelta
 from dotenv import load_dotenv
 import asyncio
+import base64
 import csv
+import hashlib
 import httpx
 import io
 import logging
@@ -450,14 +452,23 @@ def get_me(user: dict = Depends(get_current_user)):
 @limiter.limit("10/minute")
 def github_login(request: Request, cli: bool = False):
     state = secrets.token_urlsafe(16)
-    # Encode cli flag into state so the callback can read it without extra storage
-    _oauth_states[state] = {"ts": time.time(), "cli": cli}
+
+    # PKCE — code_verifier: 96 random bytes → 128-char URL-safe base64 string (within 43-128 spec)
+    code_verifier = base64.urlsafe_b64encode(secrets.token_bytes(96)).rstrip(b"=").decode()
+    # code_challenge: base64url(sha256(code_verifier)) — no padding
+    digest = hashlib.sha256(code_verifier.encode()).digest()
+    code_challenge = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+
+    _oauth_states[state] = {"ts": time.time(), "cli": cli, "code_verifier": code_verifier}
+
     params = (
         f"client_id={GITHUB_CLIENT_ID}"
         f"&redirect_uri={GITHUB_REDIRECT_URI}"
         f"&scope=read:user user:email"
         f"&state={state}"
         f"&response_type=code"
+        f"&code_challenge={code_challenge}"
+        f"&code_challenge_method=S256"
     )
     return RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
 
@@ -471,8 +482,9 @@ async def github_callback(request: Request, code: str, state: str):
             content={"status": "error", "message": "Invalid OAuth state"},
             headers=CORS_HEADERS,
         )
-    state_data = _oauth_states.pop(state)
-    is_cli     = state_data.get("cli", False)
+    state_data    = _oauth_states.pop(state)
+    is_cli        = state_data.get("cli", False)
+    code_verifier = state_data.get("code_verifier")
 
     async with httpx.AsyncClient(timeout=10) as client:
         token_res = await client.post(
@@ -482,6 +494,7 @@ async def github_callback(request: Request, code: str, state: str):
                 "client_secret": GITHUB_CLIENT_SECRET,
                 "code":          code,
                 "redirect_uri":  GITHUB_REDIRECT_URI,
+                "code_verifier": code_verifier,
             },
             headers={"Accept": "application/json"},
         )
