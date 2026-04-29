@@ -41,7 +41,7 @@ GITHUB_CLIENT_SECRET = os.environ["GITHUB_CLIENT_SECRET"]
 GITHUB_REDIRECT_URI  = os.environ["GITHUB_REDIRECT_URI"]
 JWT_SECRET           = os.environ["JWT_SECRET"]
 FRONTEND_URL         = os.environ["FRONTEND_URL"]
-TEST_MODE            = os.environ.get("TEST_MODE", "false").strip().lower() == "true"
+TEST_MODE            = os.environ.get("TEST_MODE", "").strip().lower() == "true"
 
 JWT_ALGORITHM    = "HS256"
 ACCESS_TOKEN_TTL = timedelta(minutes=3)
@@ -454,7 +454,7 @@ def get_me(user: dict = Depends(get_current_user)):
 
 
 @app.get("/auth/github")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 def github_login(request: Request, cli: bool = False):
     state = secrets.token_urlsafe(16)
 
@@ -475,14 +475,14 @@ def github_login(request: Request, cli: bool = False):
         f"&code_challenge={code_challenge}"
         f"&code_challenge_method=S256"
     )
-    response = RedirectResponse(f"https://github.com/login/oauth/authorize?{params}")
-    for k, v in CORS_HEADERS.items():
-        response.headers[k] = v
-    return response
+    return RedirectResponse(
+        url=f"https://github.com/login/oauth/authorize?{params}",
+        headers={"Access-Control-Allow-Origin": "*"},
+    )
 
 
 @app.get("/auth/github/callback")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 async def github_callback(request: Request, code: str, state: str):
     if state not in _oauth_states:
         return JSONResponse(
@@ -571,7 +571,7 @@ async def github_callback(request: Request, code: str, state: str):
 
 
 @app.post("/auth/refresh")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 def refresh_tokens(request: Request, body: RefreshRequest):
     now    = datetime.now(timezone.utc)
     result = (
@@ -623,7 +623,7 @@ def refresh_tokens(request: Request, body: RefreshRequest):
 
 
 @app.post("/auth/logout")
-@limiter.limit("10/minute")
+@limiter.limit("100/minute")
 def logout(request: Request, body: LogoutRequest):
     supabase.table("refresh_tokens").delete().eq("token", body.refresh_token).execute()
     return JSONResponse(
