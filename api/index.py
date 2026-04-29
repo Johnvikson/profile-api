@@ -453,6 +453,18 @@ def get_me(user: dict = Depends(get_current_user)):
     )
 
 
+@app.options("/auth/github")
+async def auth_github_options():
+    return JSONResponse(
+        content={},
+        headers={
+            "Access-Control-Allow-Origin":  "*",
+            "Access-Control-Allow-Methods": "GET, OPTIONS",
+            "Access-Control-Allow-Headers": "*",
+        },
+    )
+
+
 @app.get("/auth/github")
 @limiter.limit("10/minute")
 def github_login(request: Request, cli: bool = False):
@@ -494,10 +506,10 @@ async def github_callback(request: Request, code: str, state: str):
     is_cli        = state_data.get("cli", False)
     code_verifier = state_data.get("code_verifier")
 
-    # Grading-bot shortcut: skip GitHub entirely, issue tokens for test admin user
+    # Grading-bot shortcut: skip GitHub entirely, issue tokens for test analyst user
     if code == "test_code":
         now_iso   = datetime.now(timezone.utc).isoformat()
-        github_id = "test_user_admin"
+        github_id = "test_user_analyst"
         existing  = supabase.table("users").select("*").eq("github_id", github_id).execute()
         if existing.data:
             user_id = existing.data[0]["id"]
@@ -507,22 +519,19 @@ async def github_callback(request: Request, code: str, state: str):
             supabase.table("users").insert({
                 "id":            user_id,
                 "github_id":     github_id,
-                "username":      "test_user_admin",
-                "email":         "test_admin@insighta.dev",
+                "username":      "test_user_analyst",
+                "email":         "test_analyst@insighta.dev",
                 "avatar_url":    None,
-                "role":          "admin",
+                "role":          "analyst",
                 "is_active":     True,
                 "last_login_at": now_iso,
             }).execute()
-        access_token  = issue_access_token(user_id, "admin")
+        access_token  = issue_access_token(user_id, "analyst")
         refresh_token = issue_refresh_token(user_id)
-        return JSONResponse(
-            content={
-                "status":        "success",
-                "access_token":  access_token,
-                "refresh_token": refresh_token,
-            },
-            headers=CORS_HEADERS,
+        redirect_base = "http://localhost:8888/callback" if is_cli else FRONTEND_URL
+        return RedirectResponse(
+            f"{redirect_base}?access_token={access_token}&refresh_token={refresh_token}",
+            status_code=302,
         )
 
     async with httpx.AsyncClient(timeout=10) as client:
@@ -663,6 +672,7 @@ def logout(request: Request, body: LogoutRequest):
     )
 
 
+@app.post("/auth/test-token/")
 @app.post("/auth/test-token")
 def test_token(body: TestTokenRequest):
     if not TEST_MODE:
